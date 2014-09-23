@@ -27,8 +27,6 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
             ["course/contents/:courseid/section/:sectionId", "course_contents_section", "viewCourseContentsSection"],
             ["course/contents/:courseid/section/:sectionId/folder/:contentid/sectionname/:sectionname", "course_contents_folder", "viewFolder"],
             ["course/contents/:courseid/section/:sectionId/download/:contentid", "course_contents_download", "downloadContent"],
-            ["course/contents/:courseid/section/:sectionId/label/:contentid", "course_contents_label", "showLabel"],
-            ["course/contents/:courseid/section/:sectionId/hidelabel/:contentid", "course_contents_label", "hideLabel"],
             ["course/contents/:courseid/section/:sectionId/info/:contentid", "course_contents_info", "infoContent"],
             ["course/contents/:courseid/section/:sectionId/download/:contentid/:index", "course_contents_download_folder", "downloadContent"],
             ["course/contents/:courseid/section/:sectionId/info/:contentid/:index", "course_contents_info_folder", "infoContent"],
@@ -120,6 +118,20 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
 
                         if(!firstContent) {
                             firstContent = content.contentid;
+                        }
+
+                        // Check if has multiple files.
+                        if (content.modname == "folder" ||
+                                (content.contents && content.contents.length > 1)) {
+                            sections.modules[index2].multiplefiles = true;
+                        }
+
+                        // Check if is a resource URL.
+                        if (content.modname == "url" &&
+                                content.contents && content.contents.length > 0 &&
+                                content.contents[0].fileurl) {
+
+                            sections.modules[index2].fileurl = content.contents[0].fileurl;
                         }
 
                         // The file/s was/were downloaded.
@@ -227,13 +239,15 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
                                 //MM.log("Sync: Adding content: " + el.syncData.name + ": " + el.url);
                                 //MM.db.insert("sync", el);
 
-                                var extension = file.filename.substr(file.filename.lastIndexOf(".") + 1);
+                                if (file.filename) {
+                                    var extension = file.filename.substr(file.filename.lastIndexOf(".") + 1);
 
-                                // Exception for folder type, we use the resource icon.
-                                if (content.modname != "folder" && typeof(MM.plugins.contents.templates.mimetypes[extension]) != "undefined") {
-                                    sections.modules[index2].mainExtension = MM.plugins.contents.templates.mimetypes[extension]["icon"];
-                                    content.mainExtension = sections.modules[index2].mainExtension;
-                                    MM.db.insert("contents", content);
+                                    // Exception for folder type, we use the resource icon.
+                                    if (content.modname != "folder" && typeof(MM.plugins.contents.templates.mimetypes[extension]) != "undefined") {
+                                        sections.modules[index2].mainExtension = MM.plugins.contents.templates.mimetypes[extension]["icon"];
+                                        content.mainExtension = sections.modules[index2].mainExtension;
+                                        MM.db.insert("contents", content);
+                                    }
                                 }
                             });
                         }
@@ -275,6 +289,21 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
                         -1,
                         pos);
                 });
+
+                // Mod plugins should now that the page has been rendered.
+                for (var pluginName in MM.plugins) {
+                    var plugin = MM.plugins[pluginName];
+
+                    if (plugin.settings.type == 'mod') {
+                        var visible = true;
+                        if (typeof(plugin.isPluginVisible) == 'function' && !plugin.isPluginVisible()) {
+                            visible = false;
+                        }
+                        if (visible && typeof plugin.contentsPageRendered == "function") {
+                            plugin.contentsPageRendered();
+                        }
+                    }
+                }
             });
         },
 
@@ -454,7 +483,7 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
                             case "filesize":
                                 value = file[param] / 1024;
                                 // Round to 2 decimals.
-                                value = Math.round(value*100)/100 + " kb"
+                                value = Math.round(value*100)/100 + " kb";
                                 break;
                             case "localpath":
                                 var url = MM.fs.getRoot() + '/' + value;
@@ -471,7 +500,7 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
 
             information += '<p>' + MM.lang.s("viewableonthisapp") + ': ';
 
-            if (content.webOnly) {
+            if (content.webOnly && !MM.checkModPlugin(content.modname)) {
                 information += MM.lang.s("no");
             } else {
                 information += MM.lang.s("yes");
@@ -506,26 +535,6 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
 
         },
 
-        showLabel: function(courseId, sectionId, contentId) {
-            var content = MM.db.get("contents", MM.config.current_site.id + "-" + contentId);
-            content = content.toJSON();
-            if (content.description) {
-                content.description = MM.util.formatText(content.description);
-                $("#link-" + contentId + " h3").html(content.description);
-                MM.handleExternalLinks('#link-' + contentId + ' h3 a[target="_blank"]');
-            }
-            $("#link-" + contentId).attr("href", $("#link-" + contentId).attr("href").replace("label", "hidelabel"));
-            $("#link-" + contentId).toggleClass("collapse-label expand-label");
-        },
-
-        hideLabel: function(courseId, sectionId, contentId) {
-            var content = MM.db.get("contents", MM.config.current_site.id + "-" + contentId);
-            content = content.toJSON();
-            $("#link-" + contentId + " h3").html(content.name);
-            $("#link-" + contentId).attr("href", $("#link-" + contentId).attr("href").replace("hidelabel", "label"));
-            $("#link-" + contentId).toggleClass("collapse-label expand-label");
-        },
-
         getLocalPaths: function(courseId, modId, file) {
 
             var filename = file.fileurl;
@@ -537,7 +546,12 @@ define(templates,function (sectionsTpl, contentsTpl, folderTpl, mimeTypes) {
 
             // MOBILE-401, replace white spaces by "_"
             filename = decodeURIComponent(filename);
-            filename = filename.replace(" ", "_");
+            filename = filename.replace(/\s/g, "_");
+
+            // iOs doesn't like names not encoded.
+            if (MM.deviceOS == 'ios') {
+                filename = encodeURIComponent(filename);
+            }
 
             // We store in the sdcard the contents in site/course/modname/id/contentIndex/filename
             var path = MM.config.current_site.id + "/" + courseId + "/" + modId;

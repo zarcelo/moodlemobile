@@ -197,7 +197,12 @@ define(templates, function (filesTpl) {
             var downCssId = "#img-" + linkId;
 
             filename = decodeURIComponent(filename);
-            filename = filename.replace(" ", "_");
+            filename = filename.replace(/\s/g, "_");
+
+            // iOs doesn't like names not encoded.
+            if (MM.deviceOS == 'ios') {
+                filename = encodeURIComponent(filename);
+            }
 
             var directory = siteId + "/files/" + linkId;
             var filePath = directory + "/" + filename;
@@ -230,7 +235,8 @@ define(templates, function (filesTpl) {
                                 MM.handleFiles(linkCssId);
                             },
                             function(fullpath) {
-                               MM.log("Error downloading " + fullpath + " URL: " + downloadURL);
+                                $(downCssId).remove();
+                                MM.log("Error downloading " + fullpath + " URL: " + downloadURL);
                             }
                         );
                     });
